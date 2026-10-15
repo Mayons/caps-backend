@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+# Credenciales de servicio de Firebase/Google: nunca dentro del repositorio.
+*service-account*.json
+*-firebase-adminsdk-*.json
+config/serveAccountKey.local.json
+firebase-data/

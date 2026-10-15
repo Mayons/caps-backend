@@ -1,0 +1,48 @@
+{
+  "name": "caps-backend",
+  "version": "0.1.0",
+  "description": "API REST de CAPS Las Isletillas (gestión de turnos)",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status",
+    "db:seed": "tsx scripts/seed.ts",
+    "db:studio": "prisma studio",
+    "super-admin:promote": "tsx scripts/promote-super-admin.ts",
+    "postinstall": "prisma generate"
+  },
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "firebase-admin": "^13.10.0",
+    "helmet": "^8.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "@types/supertest": "^7.2.1",
+    "prisma": "^6.19.3",
+    "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "3.2"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20.12"
+  }
+}

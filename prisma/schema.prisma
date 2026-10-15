@@ -1,0 +1,150 @@
+// Esquema de datos de CAPS.
+// Las restricciones que Prisma no puede expresar (por ejemplo, evitar turnos
+// superpuestos) se agregan en SQL dentro de las migraciones.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Conexión de la aplicación (usuario SQL con privilegios mínimos).
+  url       = env("DATABASE_URL")
+  // Conexión usada solo por `prisma migrate` (usuario dueño del esquema).
+  directUrl = env("DATABASE_URL_MIGRATIONS")
+}
+
+enum Role {
+  PATIENT
+  PROFESSIONAL
+  APPOINTMENT_MANAGER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum AvailabilityStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AppointmentStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  firebaseUid String?  @unique
+  email       String   @unique
+  firstName   String
+  lastName    String
+  phone       String?
+  role        Role     @default(PATIENT)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  professional          Professional?
+  appointments          Appointment[]
+  availabilityCreated   Availability[]
+  invitationsCreated    ProfessionalInvitation[]
+}
+
+model Professional {
+  id                          String   @id @default(uuid()) @db.Uuid
+  userId                      String?  @unique @db.Uuid
+  firstName                   String
+  lastName                    String
+  email                       String   @unique
+  phone                       String
+  licenseNumber               String?
+  isActive                    Boolean  @default(true)
+  allowAvailabilityManagement Boolean  @default(false)
+  createdAt                   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime @updatedAt @db.Timestamptz(3)
+
+  user         User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  specialties  ProfessionalSpecialty[]
+  availability Availability[]
+  appointments Appointment[]
+  invitations  ProfessionalInvitation[]
+}
+
+model Specialty {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  professionals ProfessionalSpecialty[]
+  appointments  Appointment[]
+}
+
+model ProfessionalSpecialty {
+  professionalId String   @db.Uuid
+  specialtyId    String   @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  specialty    Specialty    @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+
+  // La clave primaria compuesta impide asignar dos veces la misma especialidad.
+  @@id([professionalId, specialtyId])
+  @@index([specialtyId])
+}
+
+model Availability {
+  id              String             @id @default(uuid()) @db.Uuid
+  professionalId  String             @db.Uuid
+  startAt         DateTime           @db.Timestamptz(3)
+  endAt           DateTime           @db.Timestamptz(3)
+  createdByUserId String             @db.Uuid
+  status          AvailabilityStatus @default(ACTIVE)
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @db.Timestamptz(3)
+
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Restrict)
+  createdBy    User         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([professionalId, startAt])
+}
+
+model Appointment {
+  id             String            @id @default(uuid()) @db.Uuid
+  patientId      String            @db.Uuid
+  professionalId String            @db.Uuid
+  specialtyId    String            @db.Uuid
+  startAt        DateTime          @db.Timestamptz(3)
+  endAt          DateTime          @db.Timestamptz(3)
+  status         AppointmentStatus @default(CONFIRMED)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+
+  patient      User         @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Restrict)
+  specialty    Specialty    @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+
+  @@index([professionalId, startAt])
+  @@index([patientId, startAt])
+}
+
+// Invitación de un solo uso para vincular una cuenta de acceso con un
+// profesional ya cargado. Solo se guarda el hash SHA-256 del token.
+model ProfessionalInvitation {
+  id              String    @id @default(uuid()) @db.Uuid
+  professionalId  String    @db.Uuid
+  tokenHash       String    @unique
+  expiresAt       DateTime  @db.Timestamptz(3)
+  usedAt          DateTime? @db.Timestamptz(3)
+  usedByUserId    String?   @db.Uuid
+  revokedAt       DateTime? @db.Timestamptz(3)
+  createdByUserId String    @db.Uuid
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+
+  professional Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([professionalId])
+}
