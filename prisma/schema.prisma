@@ -148,3 +148,13 @@ model ProfessionalInvitation {
 
   @@index([professionalId])
 }
+
+// Configuración global del sistema. Siempre hay una sola fila (id = 1).
+model SystemSettings {
+  id                 Int      @id @default(1)
+  // Solo ADMIN y SUPER_ADMIN pueden usar el sistema.
+  adminOnlyLogin     Boolean  @default(false)
+  // Nadie que no esté dado de alta en CAPS puede registrarse ni ingresar.
+  registrationClosed Boolean  @default(false)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+}

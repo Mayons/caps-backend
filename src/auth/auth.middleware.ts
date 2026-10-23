@@ -2,6 +2,8 @@ import type { RequestHandler } from 'express';
 import type { Role } from '@prisma/client';
 import { prisma } from '../common/prisma';
 import { forbidden, unauthorized } from '../common/errors';
+import { ADMIN_ROLES } from '../common/roles';
+import { getSettings } from '../settings/settings.service';
 import type { TokenVerifier } from './token-verifier';
 
 /**
@@ -31,6 +33,15 @@ export function createAuthenticate(verifyToken: TokenVerifier): RequestHandler {
         data: { firebaseUid: req.identity.uid },
       });
       req.currentUser = await prisma.user.findUnique({ where: { firebaseUid: req.identity.uid } });
+    }
+
+    // Restricciones de acceso que se activan desde el panel de administración.
+    const settings = await getSettings();
+    if (settings.registrationClosed && !req.currentUser) {
+      throw forbidden('REGISTRATION_CLOSED', 'Pronto se habilitará la incorporación de nuevos usuarios');
+    }
+    if (settings.adminOnlyLogin && !(req.currentUser && ADMIN_ROLES.includes(req.currentUser.role))) {
+      throw forbidden('ADMIN_ONLY_LOGIN', 'Por el momento solo pueden ingresar administradores');
     }
     next();
   };
