@@ -1,0 +1,167 @@
+name: Deploy Backend (Cloud Run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Ambiente destino"
+        required: true
+        default: "stg"
+        type: choice
+        options: [stg, prod]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-back-${{ github.ref }}-${{ github.event.inputs.target }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}       # ej: caps-isletillas
+  ARTIFACT_REPO: ${{ secrets.GCP_ARTIFACT_REPO }} # ej: caps
+  IMG_NAME: ${{ secrets.GCP_IMAGE_NAME }}         # ej: caps-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Debug GitHub ref & repo
+        run: |
+          echo "GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
+          echo "GITHUB_REF=${GITHUB_REF}"
+          echo "GITHUB_EVENT_NAME=${GITHUB_EVENT_NAME}"
+          echo "GITHUB_WORKFLOW_REF=${GITHUB_WORKFLOW_REF}"
+
+      - name: Google Auth (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Determinar variables por ambiente
+        id: cfg
+        run: |
+          if [ "${{ github.event.inputs.target }}" = "prod" ]; then
+            echo "REGION=${{ secrets.GCP_REGION_PROD }}" >> $GITHUB_OUTPUT
+            echo "SERVICE=${{ secrets.CLOUD_RUN_SERVICE_PROD }}" >> $GITHUB_OUTPUT
+          else
+            echo "REGION=${{ secrets.GCP_REGION_STG }}" >> $GITHUB_OUTPUT
+            echo "SERVICE=${{ secrets.CLOUD_RUN_SERVICE_STG }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Calcular tags e imagen objetivo
+        id: imgvars
+        run: |
+          set -euo pipefail
+          BRANCH_RAW="${GITHUB_REF##*/}"  # master o stage
+          BRANCH_TAG=$(echo "$BRANCH_RAW" | tr '[:upper:]' '[:lower:]' | tr '/_' '-' | tr -cd 'a-z0-9-.')
+          SHORT_SHA="${GITHUB_SHA::7}"
+          IMAGE_BASE="${{ steps.cfg.outputs.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.ARTIFACT_REPO }}/${{ env.IMG_NAME }}"
+          echo "BRANCH_TAG=$BRANCH_TAG" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "IMAGE_BASE=$IMAGE_BASE" >> $GITHUB_OUTPUT
+          echo "IMAGE_URI=$IMAGE_BASE:${BRANCH_TAG}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "IMAGE_URI_LATEST=$IMAGE_BASE:${BRANCH_TAG}-latest" >> $GITHUB_OUTPUT
+          echo "Usando IMAGE_URI=$IMAGE_BASE:${BRANCH_TAG}-${SHORT_SHA}"
+
+      # Build async (sin streaming) + poll hasta SUCCESS
+      - name: Build & Push imagen (async + poll)
+        id: build
+        run: |
+          set -euo pipefail
+          # Publicamos al menos '<branch>-latest'; luego retagueamos a '<branch>-<sha>'
+          BUILD_NAME=$(gcloud builds submit \
+            --gcs-source-staging-dir="gs://${{ env.PROJECT_ID }}_cloudbuild/source" \
+            --tag "${{ steps.imgvars.outputs.IMAGE_URI_LATEST }}" \
+            --project "${{ env.PROJECT_ID }}" \
+            --region "${{ steps.cfg.outputs.REGION }}" \
+            --async \
+            --format='value(name)')
+          echo "BUILD_NAME=$BUILD_NAME"
+          BUILD_ID="${BUILD_NAME##*/}"
+
+          # Fallback si no llegó el name formateado
+          if [ -z "$BUILD_ID" ]; then
+            echo "No se obtuvo BUILD_ID formateado. Intentando fallback por listado…"
+            BUILD_ID=$(gcloud builds list \
+              --project "${{ env.PROJECT_ID }}" \
+              --region "${{ steps.cfg.outputs.REGION }}" \
+              --filter='status="QUEUED" OR status="WORKING"' \
+              --sort-by=~create_time \
+              --limit=1 \
+              --format='value(id)')
+          fi
+
+          if [ -z "$BUILD_ID" ]; then
+            echo "No se pudo obtener BUILD_ID. Abortando."
+            exit 1
+          fi
+
+          echo "BUILD_ID=$BUILD_ID"
+          echo "BUILD_ID=$BUILD_ID" >> $GITHUB_OUTPUT
+
+          # Poll de estado
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" \
+              --project "${{ env.PROJECT_ID }}" \
+              --region "${{ steps.cfg.outputs.REGION }}" \
+              --format='value(status)')
+            echo "Build status: $STATUS"
+            if [[ "$STATUS" == "SUCCESS" ]]; then
+              break
+            elif [[ "$STATUS" == "FAILURE" || "$STATUS" == "CANCELLED" || "$STATUS" == "TIMEOUT" ]]; then
+              echo "Build terminó con estado: $STATUS"
+              exit 1
+            fi
+            sleep 3
+          done
+
+      # Asegurar tag de commit: retag desde <branch>-latest a <branch>-<sha>
+      - name: Retag a tag por commit
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.imgvars.outputs.IMAGE_BASE }}"
+          SRC_TAG="${{ steps.imgvars.outputs.BRANCH_TAG }}-latest"
+          DST_TAG="${{ steps.imgvars.outputs.BRANCH_TAG }}-${{ steps.imgvars.outputs.SHORT_SHA }}"
+          if gcloud artifacts docker tags list "$BASE" \
+            --project "${{ env.PROJECT_ID }}" \
+            --format='value(TAG)' | grep -Fxq "$DST_TAG"; then
+            echo "Tag $DST_TAG ya existe. Se omite retag para evitar sobreescritura."
+          else
+            echo "Creando tag $DST_TAG desde $SRC_TAG"
+            gcloud artifacts docker tags add \
+              "$BASE:$SRC_TAG" "$BASE:$DST_TAG" \
+              --project "${{ env.PROJECT_ID }}"
+          fi
+
+          echo "Verificando $BASE:$DST_TAG"
+          gcloud artifacts docker tags list "$BASE" \
+            --project "${{ env.PROJECT_ID }}" \
+            --format='value(TAG)' | grep -Fx "$DST_TAG"
+
+      - name: Autenticación Docker a Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ steps.cfg.outputs.REGION }}-docker.pkg.dev --quiet
+
+      - name: Deploy a Cloud Run
+        run: |
+          gcloud run deploy "${{ steps.cfg.outputs.SERVICE }}" \
+            --region "${{ steps.cfg.outputs.REGION }}" \
+            --image  "${{ steps.imgvars.outputs.IMAGE_URI }}" \
+            --allow-unauthenticated
+          echo "URL:"
+          gcloud run services describe "${{ steps.cfg.outputs.SERVICE }}" \
+            --region "${{ steps.cfg.outputs.REGION }}" \
+            --format='value(status.url)'

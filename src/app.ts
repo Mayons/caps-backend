@@ -12,6 +12,8 @@ import { createSpecialtiesRouter } from './specialties/specialties.routes';
 import { createProfessionalsRouter } from './professionals/professionals.routes';
 import { createAvailabilityRouter } from './availability/availability.routes';
 import { createAppointmentsRouter } from './appointments/appointments.routes';
+import { createSettingsRouter } from './settings/settings.routes';
+import { getSettings } from './settings/settings.service';
 
 /**
  * Arma la aplicación Express. Recibe el verificador de tokens como parámetro
@@ -31,8 +33,14 @@ export function createApp({ verifyToken }: { verifyToken: TokenVerifier }) {
     res.json({ status: 'ok' });
   });
   // Configuración pública que necesita el frontend (así no se duplican reglas).
-  api.get('/config', (_req, res) => {
-    res.json({ appointmentDurationMinutes: env.APPOINTMENT_DURATION_MINUTES, timeZone: APP_TIME_ZONE });
+  api.get('/config', async (_req, res) => {
+    const settings = await getSettings();
+    res.json({
+      appointmentDurationMinutes: env.APPOINTMENT_DURATION_MINUTES,
+      timeZone: APP_TIME_ZONE,
+      adminOnlyLogin: settings.adminOnlyLogin,
+      registrationClosed: settings.registrationClosed,
+    });
   });
   api.use('/auth', createAuthRouter(authenticate));
   api.use('/users', createUsersRouter(authenticate));
@@ -40,6 +48,7 @@ export function createApp({ verifyToken }: { verifyToken: TokenVerifier }) {
   api.use('/professionals', createProfessionalsRouter(authenticate));
   api.use('/availability', createAvailabilityRouter(authenticate));
   api.use('/appointments', createAppointmentsRouter(authenticate));
+  api.use('/settings', createSettingsRouter(authenticate));
 
   app.use('/api/v1', api);
   app.use(notFoundHandler);

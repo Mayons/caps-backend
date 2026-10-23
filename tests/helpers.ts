@@ -3,6 +3,7 @@ import type { Role } from '@prisma/client';
 import { createApp } from '../src/app';
 import { prisma } from '../src/common/prisma';
 import type { TokenVerifier } from '../src/auth/token-verifier';
+import { clearSettingsCache } from '../src/settings/settings.service';
 
 /**
  * Verificador falso: el "token" tiene el formato `uid|email|verified`.
@@ -25,6 +26,8 @@ export async function resetDatabase() {
   await prisma.$executeRawUnsafe(
     'TRUNCATE "Appointment", "Availability", "ProfessionalInvitation", "ProfessionalSpecialty", "Professional", "Specialty", "User" CASCADE',
   );
+  await prisma.systemSettings.updateMany({ data: { adminOnlyLogin: false, registrationClosed: false } });
+  clearSettingsCache();
 }
 
 let counter = 0;
