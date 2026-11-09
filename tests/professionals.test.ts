@@ -44,6 +44,24 @@ describe('Gestión de profesionales', () => {
     expect(res.body[0]).not.toHaveProperty('phone');
   });
 
+  it('busca profesionales por coincidencias parciales de nombre y apellido', async () => {
+    const admin = await createUser('ADMIN');
+    const specialty = await createSpecialty();
+    const created = await api()
+      .post('/api/v1/professionals')
+      .set('Authorization', admin.auth)
+      .send({ firstName: 'Juan', lastName: 'Paz', email: 'juan.paz@example.com', phone: '0000 111111', specialtyIds: [specialty.id] });
+    expect(created.status).toBe(201);
+
+    const res = await api()
+      .get('/api/v1/professionals/manage?search=an%20Pa')
+      .set('Authorization', admin.auth);
+
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(1);
+    expect(res.body.items[0]).toMatchObject({ firstName: 'Juan', lastName: 'Paz' });
+  });
+
   it('un gestor de turnos no puede crear invitaciones', async () => {
     const manager = await createUser('APPOINTMENT_MANAGER');
     const professional = await createProfessional([(await createSpecialty()).id]);

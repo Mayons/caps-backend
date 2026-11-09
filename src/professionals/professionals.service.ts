@@ -81,12 +81,21 @@ function managedInclude() {
 }
 
 export async function listManagedProfessionals(search: string | undefined, pagination: Pagination) {
-  const where: Prisma.ProfessionalWhereInput = search
+  const searchTerms = search?.trim().split(/\s+/).filter(Boolean) ?? [];
+  const where: Prisma.ProfessionalWhereInput = searchTerms.length > 0
     ? {
         OR: [
           { firstName: { contains: search, mode: 'insensitive' } },
           { lastName: { contains: search, mode: 'insensitive' } },
           { email: { contains: search, mode: 'insensitive' } },
+          {
+            AND: searchTerms.map((term) => ({
+              OR: [
+                { firstName: { contains: term, mode: 'insensitive' } },
+                { lastName: { contains: term, mode: 'insensitive' } },
+              ],
+            })),
+          },
         ],
       }
     : {};
